@@ -1,28 +1,22 @@
-# 数据路径配置
+# configs/default.yaml
 data:
-counts_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/RNA_counts.tsv'
-coor_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/position.tsv'
-used_barcodes_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/used_barcodes.txt'
+  counts_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/RNA_counts.tsv'
+  coor_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/position.tsv'
+  used_barcodes_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/used_barcodes.txt'
 model:
-  alpha: 0.0001 # 平衡空间网络和基因相似性网络的权重
-  n_top_genes: 3000 # 用于分析的高变基因数量
-  hidden_dims: [512, 30] # 编码器隐藏层维度
-  rad_cutoff: 50 # 构建空间网络的半径阈值
-  k_neighbors: 6 # 构建基因相似性网络的邻居数
-  similarity_metric: "cosine" # 基因相似性度量: cosine, euclidean, pearson
-
-# 训练参数
+  alpha: 0.5  # 修正：原值 0.0001 过小，建议 0.1~0.9
+  n_top_genes: 3000
+  hidden_dims: [512, 30]
+  rad_cutoff: 50
+  k_neighbors: 6
+  similarity_metric: "cosine"
 train:
   n_epochs: 1000
   lr: 0.0001
   weight_decay: 0.0001
-  key_added: "GATES" # 嵌入结果在adata中的存储键名
-
-# 聚类参数
+  key_added: "GATES"
 cluster:
-  resolution: 1.0 # Louvain聚类分辨率
-
-# 可视化输出路径
+  resolution: 1.0
 output:
   neighbor_stats_plot: 'C:/Users/admini/Documents/GATES-ST/figure/alpha{alpha}_{resolution}_Stereo-seq_Mouse_NumberOfNeighbors.png'
-  spatial_plot_crop: [10100, 10721, 13810, 13093] # 裁剪坐标 [x_min, x_max, y_min, y_max]
+  spatial_plot_crop: [10100, 10721, 13810, 13093]
