@@ -1,0 +1,199 @@
+# src/utils.py
+import pandas as pd
+import numpy as np
+import scanpy as sc
+from sklearn.metrics.pairwise import cosine_similarity, euclidean_distances
+from scipy.stats import pearsonr
+import matplotlib.pyplot as plt
+from typing import Tuple
+import torch
+from torch_geometric.data import Data
+import sklearn
+
+def load_and_preprocess_data(config: dict) -> sc.AnnData:
+    """
+    根据配置文件加载并预处理数据。
+    返回一个预处理好的 AnnData 对象。
+    """
+    # 1. 加载计数矩阵和坐标
+    counts = pd.read_csv(config['data']['counts_file'], sep='\t', index_col=0)
+    coor_df = pd.read_csv(config['data']['coor_file'], sep='\t')
+
+    # 2. 格式化索引
+    counts.columns = ['Spot_' + str(x) for x in counts.columns]
+    coor_df.index = coor_df['label'].map(lambda x: 'Spot_' + str(x))
+    coor_df = coor_df.loc[:, ['x', 'y']]
+
+    # 3. 创建 AnnData 对象
+    adata = sc.AnnData(counts.T)
+    adata.var_names_make_unique()
+    coor_df = coor_df.loc[adata.obs_names, ['y', 'x']]
+    adata.obsm["spatial"] = coor_df.to_numpy()
+
+    # 4. 计算质量控制指标
+    sc.pp.calculate_qc_metrics(adata, inplace=True)
+
+    # 5. 过滤barcode（如果提供了）
+    if 'used_barcodes_file' in config['data'] and config['data']['used_barcodes_file']:
+        used_barcode = pd.read_csv(config['data']['used_barcodes_file'], sep='\t', header=None)[0]
+        adata = adata[used_barcode, :]
+
+    # 6. 基因过滤和标准化
+    sc.pp.filter_genes(adata, min_cells=50)
+    sc.pp.highly_variable_genes(adata, flavor="seurat_v3", n_top_genes=config['model']['n_top_genes'])
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+
+    return adata
+
+def Cal_Spatial_Net(adata, rad_cutoff=None, k_cutoff=None, model='Radius', verbose=True):
+    """构建空间邻居网络"""
+    assert model in ['Radius', 'KNN']
+    if verbose:
+        print('------Calculating spatial graph...')
+
+    coor = pd.DataFrame(adata.obsm['spatial'])
+    coor.index = adata.obs.index
+    coor.columns = ['imagerow', 'imagecol']
+
+    if model == 'Radius':
+        nbrs = sklearn.neighbors.NearestNeighbors(radius=rad_cutoff).fit(coor)
+        distances, indices = nbrs.radius_neighbors(coor, return_distance=True)
+        KNN_list = []
+        for it in range(indices.shape[0]):
+            KNN_list.append(pd.DataFrame(zip([it] * indices[it].shape[0], indices[it], distances[it])))
+    elif model == 'KNN':
+        nbrs = sklearn.neighbors.NearestNeighbors(n_neighbors=k_cutoff + 1).fit(coor)
+        distances, indices = nbrs.kneighbors(coor)
+        KNN_list = []
+        for it in range(indices.shape[0]):
+            KNN_list.append(pd.DataFrame(zip([it] * indices.shape[1], indices[it, :], distances[it, :])))
+
+    KNN_df = pd.concat(KNN_list)
+    KNN_df.columns = ['Cell1', 'Cell2', 'Distance']
+    Spatial_Net = KNN_df.copy()
+    Spatial_Net = Spatial_Net.loc[Spatial_Net['Distance'] > 0,]
+
+    id_cell_trans = dict(zip(range(coor.shape[0]), np.array(coor.index)))
+    Spatial_Net['Cell1'] = Spatial_Net['Cell1'].map(id_cell_trans)
+    Spatial_Net['Cell2'] = Spatial_Net['Cell2'].map(id_cell_trans)
+
+    if verbose:
+        print('The graph contains %d edges, %d cells.' % (Spatial_Net.shape[0], adata.n_obs))
+        print('%.4f neighbors per cell on average.' % (Spatial_Net.shape[0] / adata.n_obs))
+
+    adata.uns['Spatial_Net'] = Spatial_Net
+
+def Stats_Spatial_Net(adata, save_path=None, show_plot=True):
+    """统计并可视化空间网络属性"""
+    Num_edge = adata.uns['Spatial_Net']['Cell1'].shape[0]
+    Mean_edge = Num_edge / adata.shape[0]
+
+    plot_df = pd.value_counts(pd.value_counts(adata.uns['Spatial_Net']['Cell1']))
+    plot_df = plot_df / adata.shape[0]
+
+    if show_plot:
+        fig, ax = plt.subplots(figsize=[3, 2])
+        plt.ylabel('Percentage')
+        plt.xlabel('')
+        plt.title('Number of Neighbors (Mean=%.2f)' % Mean_edge)
+        ax.bar(plot_df.index, plot_df)
+        if save_path:
+            plt.tight_layout()
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.show()
+
+def Cal_Gene_Similarity_Net(adata, k_neighbors=6, metric='cosine', verbose=True):
+    """计算基因表达相似度网络"""
+    if 'highly_variable' in adata.var.columns:
+        adata_Vars = adata[:, adata.var['highly_variable']]
+    else:
+        adata_Vars = adata
+
+    X = adata_Vars.X.toarray() if hasattr(adata_Vars.X, 'toarray') else adata_Vars.X
+    X = X.astype(np.float32)
+
+    # 向量化计算相似度，避免双重循环
+    if metric == 'cosine':
+        similarity_matrix = cosine_similarity(X)
+    elif metric == 'euclidean':
+        similarity_matrix = -euclidean_distances(X)
+    elif metric == 'pearson':
+        X_mean = X.mean(axis=1, keepdims=True)
+        X_centered = X - X_mean
+        X_std = X.std(axis=1, keepdims=True)
+        X_normalized = X_centered / X_std
+        similarity_matrix = np.dot(X_normalized, X_normalized.T) / (X.shape[1] - 1)
+    else:
+        raise ValueError(f"未知的相似度度量: {metric}")
+
+    KNN_list = []
+    for i in range(similarity_matrix.shape[0]):
+        sorted_indices = np.argsort(-similarity_matrix[i, :])
+        closest_cells = sorted_indices[1:k_neighbors + 1]
+        closest_distances = similarity_matrix[i, closest_cells]
+        KNN_list.append(pd.DataFrame({
+            'Cell1': [i] * k_neighbors,
+            'Cell2': closest_cells,
+            'Distance': closest_distances
+        }))
+
+    KNN_df = pd.concat(KNN_list, ignore_index=True)
+    id_cell_trans = dict(zip(range(X.shape[0]), adata_Vars.obs.index))
+    KNN_df['Cell1'] = KNN_df['Cell1'].map(id_cell_trans)
+    KNN_df['Cell2'] = KNN_df['Cell2'].map(id_cell_trans)
+
+    if verbose:
+        print('The graph contains %d edges, %d cells.' % (KNN_df.shape[0], adata.n_obs))
+        print('%.4f neighbors per cell on average.' % (KNN_df.shape[0] / adata.n_obs))
+
+    adata.uns['Gene_Similarity_Net'] = KNN_df
+
+def build_pyg_graph_from_df(adata: sc.AnnData, net_key: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    从 adata.uns 中的 DataFrame 网络构建 PyG 所需的 edge_index。
+    返回: (edge_index, edge_weight)
+    """
+    df = adata.uns[net_key].copy()
+    cell_to_idx = {cell: idx for idx, cell in enumerate(adata.obs_names)}
+
+    df['Cell1'] = df['Cell1'].map(cell_to_idx)
+    df['Cell2'] = df['Cell2'].map(cell_to_idx)
+
+    # 移除映射失败的行 (NaN)
+    df = df.dropna(subset=['Cell1', 'Cell2'])
+    df['Cell1'] = df['Cell1'].astype(int)
+    df['Cell2'] = df['Cell2'].astype(int)
+
+    edge_index = torch.tensor([df['Cell1'].values, df['Cell2'].values], dtype=torch.long)
+    edge_weight = torch.tensor(df['Distance'].values, dtype=torch.float32)
+
+    return edge_index, edge_weight
+
+def create_pyg_data(adata: sc.AnnData, config: dict) -> Data:
+    """
+    将 AnnData 对象转换为 PyTorch Geometric 的 Data 对象。
+    包含特征矩阵、空间边和基因相似性边。
+    """
+    # 特征矩阵
+    if 'highly_variable' in adata.var.columns:
+        X = adata[:, adata.var['highly_variable']].X
+    else:
+        X = adata.X
+
+    X = torch.tensor(X.toarray() if hasattr(X, 'toarray') else X, dtype=torch.float)
+
+    # 构建两种类型的边
+    spatial_edge_index, spatial_edge_weight = build_pyg_graph_from_df(adata, 'Spatial_Net')
+    gene_sim_edge_index, gene_sim_edge_weight = build_pyg_graph_from_df(adata, 'Gene_Similarity_Net')
+
+    # 创建 PyG Data 对象
+    data = Data(
+        x=X,
+        spatial_edge_index=spatial_edge_index,
+        spatial_edge_weight=spatial_edge_weight,
+        gene_sim_edge_index=gene_sim_edge_index,
+        gene_sim_edge_weight=gene_sim_edge_weight
+    )
+
+    return data
