@@ -1,5 +1,26 @@
+# Directories
 data/
+logs/
+cache/
+results/
+
+# Large file extensions
 *.zip
 *.tar.gz
 *.h5
+*.h5ad      # 👈 显式加上 .h5ad（你出问题的文件类型）
 *.pt
+*.pth
+*.onnx
+*.pb
+
+# Python
+*.pyc
+__pycache__/
+
+# Text files (only if truly temporary)
+default_yaml.txt
+gates_model.txt
+run_analysis.txt
+trainer.txt
+utils.txt

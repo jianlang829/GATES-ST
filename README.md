@@ -6,17 +6,81 @@ This project implements the **G**raph **A**ttention **T**ranscriptomics **E**nco
 
 ```
 gates_project/
-├── src/
-│   ├── __init__.py
-│   ├── gates_model.py          # Model definition
-│   ├── trainer.py              # Training logic
-│   └── utils.py                # Data processing utilities
-├── configs/
-│   └── default.yaml            # Configuration file
-├── scripts/
-│   └── run_analysis.py         # Main script
-├── README.md
-└── requirements.txt
+C:.
+│  .gitignore
+│  default_yaml.txt
+│  gates_model.txt
+│  LICENSE
+│  README.md
+│  requirements.txt
+│  run_analysis.txt
+│  trainer.txt
+│  utils.txt
+│
+├─configs
+│      default.yaml
+│
+├─data
+│  ├─151673
+│  │  │  filtered_feature_bc_matrix.h5
+│  │  │  metadata.tsv
+│  │  │  position.tsv
+│  │  │  RNA_counts.tsv
+│  │  │  truth.txt
+│  │  │  used_barcodes.txt
+│  │  │
+│  │  └─spatial
+│  │          scalefactors_json.json
+│  │          tissue_hires_image.png
+│  │          tissue_lowres_image.png
+│  │          tissue_positions_list.csv
+│  │
+│  ├─151674
+│  │  │  filtered_feature_bc_matrix.h5
+│  │  │  metadata.tsv
+│  │  │  truth.txt
+│  │  │  V1_Breast_Cancer_Block_A_Section_1_raw_feature_bc_matrix.h5
+│  │  │
+│  │  └─spatial
+│  │          aligned_fiducials.jpg
+│  │          detected_tissue_image.jpg
+│  │          scalefactors_json.json
+│  │          tissue_hires_image.png
+│  │          tissue_lowres_image.png
+│  │          tissue_positions_list.csv
+│  │
+│  └─151675
+│      │  _filtered_feature_bc_matrix.h5
+│      │  _truth.txt
+│      │
+│      └─spatial
+│              scalefactors_json.json
+│              tissue_hires_image.png
+│              tissue_lowres_image.png
+│              tissue_positions_list.csv
+│
+├─scripts
+│  │  run_analysis.py
+│  │  __init__.py
+│  │
+│  └─__pycache__
+│          run_analysis.cpython-310.pyc
+│          __init__.cpython-310.pyc
+│
+└─src
+    │  Check_gpu_available.py
+    │  convert_visium_to_stereo.py
+    │  gates_model.py
+    │  pyg.py
+    │  trainer.py
+    │  utils.py
+    │  __init__.py
+    │
+    └─__pycache__
+            gates_model.cpython-310.pyc
+            trainer.cpython-310.pyc
+            utils.cpython-310.pyc
+            __init__.cpython-310.pyc
 ```
 
 ## ⚙️ Installation
