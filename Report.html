@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GATES 项目技术报告</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      line-height: 1.6;
+      margin: 40px auto;
+      max-width: 960px;
+      color: #333;
+      background-color: #fafafa;
+    }
+    h1, h2, h3 {
+      color: #2c3e50;
+    }
+    h1 {
+      text-align: center;
+      border-bottom: 2px solid #3498db;
+      padding-bottom: 10px;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 14px;
+    }
+    code {
+      font-family: Consolas, Monaco, monospace;
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    ul, ol {
+      margin-left: 20px;
+    }
+    .section {
+      margin-bottom: 30px;
+    }
+    .highlight {
+      background-color: #fffde7;
+      padding: 10px;
+      border-left: 4px solid #ffc107;
+      margin: 15px 0;
+    }
+  </style>
+</head>
+<body>
+
+<h1>GATES 项目技术报告</h1>
+
+<div class="section">
+  <h2>1. 项目概述</h2>
+  <p><strong>GATES</strong>（Graph Attention Transcriptomics Encoder）是一个专为空间转录组学（Spatial Transcriptomics）设计的深度学习框架，基于 PyTorch Geometric 实现。它融合<strong>空间邻接图</strong>与<strong>基因表达相似性图</strong>，通过图注意力机制（GAT）学习细胞嵌入，用于高精度组织区域聚类与可视化。</p>
+</div>
+
+<div class="section">
+  <h2>2. 核心组件</h2>
+  <ul>
+    <li><strong>数据预处理</strong>：使用 Scanpy 加载 10x Visium 数据，筛选高变基因（默认 3000 个），标准化并构建 AnnData 对象。</li>
+    <li><strong>图构建</strong>：
+      <ul>
+        <li>空间图：基于半径（<code>rad_cutoff=50</code>）构建邻接关系。</li>
+        <li>基因相似图：基于余弦相似度（<code>cosine</code>）选取 K=6 最近邻。</li>
+      </ul>
+    </li>
+    <li><strong>模型架构</strong>（<code>gates_model.py</code>）：
+      <ul>
+        <li>两个独立 GAT 层分别处理空间图与基因图。</li>
+        <li>加权融合：融合权重由超参数 <code>alpha=0.5</code> 控制。</li>
+        <li>融合后通过第三层 GAT 输出嵌入（维度 30）。</li>
+        <li>附带解码器用于重构损失（MSE）训练。</li>
+      </ul>
+    </li>
+    <li><strong>训练流程</strong>（<code>trainer.py</code>）：
+      <ul>
+        <li>优化器：Adam（lr=1e-4, weight_decay=1e-4）</li>
+        <li>损失函数：MSE 重构损失</li>
+        <li>训练轮次：1000 epochs</li>
+      </ul>
+    </li>
+    <li><strong>下游分析</strong>：
+      <ul>
+        <li>Louvain 聚类（分辨率=1.0）</li>
+        <li>UMAP 降维</li>
+        <li>评估指标：Silhouette Score、Davies-Bouldin Index</li>
+        <li>空间聚类图保存至 <code>results/spatial_plot.png</code></li>
+      </ul>
+    </li>
+  </ul>
+</div>
+
+<div class="section">
+  <h2>3. 关键配置（<code>configs/default.yaml</code>）</h2>
+  <pre>model:
+  alpha: 0.5
+  n_top_genes: 3000
+  hidden_dims: [512, 30]
+  rad_cutoff: 50
+  k_neighbors: 6
+  similarity_metric: "cosine"
+
+train:
+  n_epochs: 1000
+  lr: 0.0001
+  weight_decay: 0.0001
+
+cluster:
+  resolution: 1.0</pre>
+</div>
+
+<div class="section">
+  <h2>4. 技术栈与依赖</h2>
+  <ul>
+    <li>Python ≥ 3.8</li>
+    <li>PyTorch 2.8 + CUDA 12.6</li>
+    <li>torch-geometric 2.6.1</li>
+    <li>Scanpy, anndata, scikit-learn, umap-learn</li>
+    <li>Matplotlib, pandas, numpy</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h2>5. 运行流程（<code>scripts/run_analysis.py</code>）</h2>
+  <ol>
+    <li>加载 YAML 配置</li>
+    <li>检查缓存（<code>cache/preprocessed_adata_*.h5ad</code>）</li>
+    <li>若无缓存，则执行完整预处理与图构建</li>
+    <li>转换为 PyG <code>Data</code> 对象</li>
+    <li>初始化并训练 GATES 模型</li>
+    <li>推理获得嵌入向量</li>
+    <li>执行聚类、评估、绘图</li>
+    <li>保存结果并输出成功提示</li>
+  </ol>
+</div>
+
+<div class="section">
+  <h2>6. 项目亮点</h2>
+  <ul>
+    <li>端到端流程：从原始数据到空间聚类图一键生成</li>
+    <li>双图融合机制：兼顾空间位置与基因表达语义</li>
+    <li>模块化设计：便于替换图构建策略或模型结构</li>
+    <li>支持缓存：避免重复预处理，提升效率</li>
+    <li>评估指标集成：自动计算聚类质量</li>
+  </ul>
+</div>
+
+<div class="section">
+  <h2>7. 输出示例</h2>
+  <p>运行成功后，控制台输出如下指标：</p>
+  <pre>Silhouette Coefficient: 0.4215
+Davies-Bouldin Index: 1.2308</pre>
+  <p>并生成空间聚类图：<code>results/spatial_plot.png</code></p>
+</div>
+
+<div class="section">
+  <h2>8. 适用场景</h2>
+  <ul>
+    <li>10x Genomics Visium 小鼠/人类组织切片</li>
+    <li>Stereo-seq 等其他空间转录组平台（需格式转换）</li>
+    <li>无监督组织区域发现与边界识别</li>
+  </ul>
+</div>
+
+<div class="highlight">
+  <p>✅ 项目已完整实现，结构清晰，可直接复现。建议在 GPU 环境下运行以加速训练。</p>
+</div>
+
+</body>
+</html>
