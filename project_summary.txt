@@ -257,6 +257,7 @@ from sklearn.metrics import silhouette_score, davies_bouldin_score
 from src.utils import load_and_preprocess_data, Cal_Spatial_Net, Stats_Spatial_Net, Cal_Gene_Similarity_Net, create_pyg_data
 from src.gates_model import GATES
 from src.trainer import GATESTrainer
+import squidpy as sq
 
 def main():
     with open('./configs/default.yaml', 'r', encoding='utf-8') as f:
@@ -361,15 +362,16 @@ def main():
     print("Number of NaNs:", adata.obs['louvain'].isna().sum())
     print("Data type:", adata.obs['louvain'].dtype)
 
-    # 绘图
-    sc.pl.spatial(
+    # 替换原来的 sc.pl.spatial 调用
+    sq.pl.spatial_scatter(
         adata,
         color="louvain",
-        crop_coord=crop_coord,
-        spot_size=6,
-        show=False,
-        title=f'Ours SC{sc_score:.2f} DB{db_score:.2f}'
+        shape=None,  # 不显示组织轮廓（可选）
+        size=20,     # 对应 spot_size
+        title=f'Ours SC{sc_score:.2f} DB{db_score:.2f}',
+        save=output_path  # 自动保存，无需 plt.savefig
     )
+
     plt.axis('off')
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
