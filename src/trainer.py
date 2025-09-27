@@ -1,75 +1,80 @@
-# src/trainer.py
 import torch
 import torch.optim as optim
 from tqdm import tqdm
-from .gates_model import GATES
+from .gates_model import ImprovedGATES
 from typing import Dict, Any
 import torch.nn.functional as F
-from torch_geometric.data import Data
 
-class GATESTrainer:
-    """
-    GATES 模型训练器
-    """
-    def __init__(self, model: GATES, config: Dict[str, Any]):
+class ImprovedGATESTrainer:
+    """增强版训练器，吸收TF版本多目标优化思想"""
+
+    def __init__(self, model: ImprovedGATES, config: Dict[str, Any]):
         self.model = model
         self.config = config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
+
         self.optimizer = optim.Adam(
             self.model.parameters(),
             lr=config['train']['lr'],
             weight_decay=config['train']['weight_decay']
         )
+
+        # 从TF版本学习的多目标损失权重
+        self.lambda_spatial = config['train'].get('lambda_spatial', 0.1)
+        self.lambda_att = config['train'].get('lambda_att', 0.01)
         self.loss_history = []
 
-    def train(self, data: Data, n_epochs: int) -> None:
-        """
-        训练模型。
-        Args:
-            data: PyG Data 对象（不是 DataLoader）
-            n_epochs: 训练轮数
-        """
+    def calc_spatial_consistency(self, embeddings, spatial_edge_index):
+        """TF版本的空间一致性损失"""
+        z_i = embeddings[spatial_edge_index[0]]
+        z_j = embeddings[spatial_edge_index[1]]
+        return F.mse_loss(z_i, z_j)
+
+    def attention_regularization(self, attention_weights):
+        """TF版本的注意力正则化"""
+        reg_loss = 0
+        for key, (edge_index, att_weights) in attention_weights.items():
+            # 鼓励注意力权重分布均匀（避免过度集中）
+            entropy = -torch.sum(att_weights * torch.log(att_weights + 1e-8))
+            reg_loss += entropy
+        return -reg_loss  # 最大化熵
+
+    def train(self, data, n_epochs: int) -> None:
         self.model.train()
         data = data.to(self.device)
-        spatial_edge_index = data.spatial_edge_index  # [2, E]
-
-        # 从配置中读取空间正则化权重（默认为 0.0，即不启用）
-        lambda_spatial = self.config['train'].get('lambda_spatial', 0.0)
 
         for epoch in tqdm(range(n_epochs), desc="Training"):
             self.optimizer.zero_grad()
-            embeddings, recon = self.model(data.x, spatial_edge_index, data.gene_sim_edge_index)
 
-            # 1. 重构损失（MSE）
+            # 前向传播（返回注意力权重）
+            embeddings, recon, attention_weights = self.model(
+                data.x, data.spatial_edge_index, data.gene_sim_edge_index
+            )
+
+            # 多目标损失函数（TF版本思想）
             recon_loss = F.mse_loss(recon, data.x)
+            spatial_loss = self.calc_spatial_consistency(embeddings, data.spatial_edge_index)
+            att_reg_loss = self.attention_regularization(attention_weights)
 
-            # 2. 空间一致性正则项（仅当 lambda_spatial > 0 时计算）
-            spatial_loss = 0.0
-            if lambda_spatial > 0.0:
-                z_i = embeddings[spatial_edge_index[0]]  # source 节点嵌入
-                z_j = embeddings[spatial_edge_index[1]]  # target 节点嵌入
-                spatial_loss = F.mse_loss(z_i, z_j)      # ||z_i - z_j||^2 的均值
-
-            # 3. 总损失
-            total_loss = recon_loss + lambda_spatial * spatial_loss
+            # 综合损失（TF版本的多目标优化）
+            total_loss = (recon_loss +
+                         self.lambda_spatial * spatial_loss +
+                         self.lambda_att * att_reg_loss)
 
             total_loss.backward()
             self.optimizer.step()
             self.loss_history.append(total_loss.item())
 
             if epoch % 100 == 0:
-                print(f"Epoch {epoch}, Recon Loss: {recon_loss.item():.4f}", end="")
-                if lambda_spatial > 0.0:
-                    print(f", Spatial Loss: {spatial_loss.item():.4f}", end="")
-                print(f", Total Loss: {total_loss.item():.4f}")
+                print(f"Epoch {epoch}: Recon={recon_loss:.4f}, "
+                      f"Spatial={spatial_loss:.4f}, AttReg={att_reg_loss:.4f}, "
+                      f"Total={total_loss:.4f}")
 
-    def infer(self, data: Data) -> torch.Tensor:
-        """
-        使用训练好的模型进行推理。
-        """
+    def infer(self, data):
+        """推理并返回注意力权重用于分析"""
         self.model.eval()
         data = data.to(self.device)
         with torch.no_grad():
             embeddings = self.model.encode(data.x, data.spatial_edge_index, data.gene_sim_edge_index)
-        return embeddings.cpu().numpy()
+        return embeddings.cpu().numpy(), self.model.attention_weights

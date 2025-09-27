@@ -1,21 +1,24 @@
 # configs/default.yaml
+framework: "pytorch"
 data:
   counts_file: 'data/151673/RNA_counts.tsv'
   coor_file: 'data/151673/position.tsv'
-  used_barcodes_file: 'data/151673/used_barcodes.txt'
 model:
-  alpha: 0.5  # 修正：原值 0.0001 过小，建议 0.1~0.9
+  alpha: 0.5
   n_top_genes: 3000
   hidden_dims: [512, 30]
   rad_cutoff: 50
   k_neighbors: 6
-  similarity_metric: "cosine"
+  similarity_metric: ["cosine", "pearson"]  # 多度量
+  att_heads: 4                             # 多头注意力
 train:
-  n_epochs: 10
+  n_epochs: 1000
   lr: 0.0001
   weight_decay: 0.0001
   lambda_spatial: 0.1
-  key_added: "GATES"
+  lambda_att: 0.01                        # 注意力正则化
+  use_pruning: true                       # 图剪枝
+  pruning_resolution: 0.2                 # 预聚类分辨率
 cluster:
   resolution: 1.0
 output:
