@@ -11,13 +11,14 @@ model:
   k_neighbors: 6
   similarity_metric: "cosine"
 train:
-  n_epochs: 1000
+  n_epochs: 10
   lr: 0.0001
   weight_decay: 0.0001
+  lambda_spatial: 0.1
   key_added: "GATES"
 cluster:
   resolution: 1.0
 output:
   spatial_plot_path: "results/spatial_plot.png"
   neighbor_stats_plot: 'figure/alpha{alpha}_{resolution}_Stereo-seq_Mouse_NumberOfNeighbors.png'
-  spatial_plot_crop: [10100, 10721, 13810, 13093]
+  spatial_plot_crop: null

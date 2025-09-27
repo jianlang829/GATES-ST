@@ -207,21 +207,14 @@ A: 可以！只要提供符合格式的空间表达数据即可。
 
 
 ============================================================
-文件: requirements.txt
-============================================================
-
-[无法读取二进制文件或编码错误: .\requirements.txt]
-
-
-============================================================
 文件: configs/default.yaml
 ============================================================
 
 # configs/default.yaml
 data:
-  counts_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/RNA_counts.tsv'
-  coor_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/position.tsv'
-  used_barcodes_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/used_barcodes.txt'
+  counts_file: 'data/151673/RNA_counts.tsv'
+  coor_file: 'data/151673/position.tsv'
+  used_barcodes_file: 'data/151673/used_barcodes.txt'
 model:
   alpha: 0.5  # 修正：原值 0.0001 过小，建议 0.1~0.9
   n_top_genes: 3000
@@ -230,17 +223,25 @@ model:
   k_neighbors: 6
   similarity_metric: "cosine"
 train:
-  n_epochs: 1000
+  n_epochs: 10
   lr: 0.0001
   weight_decay: 0.0001
+  lambda_spatial: 0.1
   key_added: "GATES"
 cluster:
   resolution: 1.0
 output:
   spatial_plot_path: "results/spatial_plot.png"
-  neighbor_stats_plot: 'C:/Users/admini/Documents/GATES-ST/figure/alpha{alpha}_{resolution}_Stereo-seq_Mouse_NumberOfNeighbors.png'
-  spatial_plot_crop: [10100, 10721, 13810, 13093]
+  neighbor_stats_plot: 'figure/alpha{alpha}_{resolution}_Stereo-seq_Mouse_NumberOfNeighbors.png'
+  spatial_plot_crop: null
 
+
+
+============================================================
+文件: configs/requirements.txt
+============================================================
+
+[无法读取二进制文件或编码错误: .\configs/requirements.txt]
 
 
 ============================================================
@@ -323,6 +324,7 @@ def main():
     sc.pp.neighbors(adata, use_rep=config['train']['key_added'])
     sc.tl.umap(adata)
     sc.tl.louvain(adata, resolution=resolution)
+    adata.obs['louvain'] = adata.obs['louvain'].astype('category')  # 👈 新增这行！
     louvain_labels = adata.obs['louvain'].astype(int)
 
     # 修正：使用 GATES 嵌入计算指标，而非 UMAP
@@ -347,6 +349,17 @@ def main():
 
     # 确保目录存在
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    print("Spatial coordinates range:")
+    print("x:", adata.obsm["spatial"][:, 0].min(), "to", adata.obsm["spatial"][:, 0].max())
+    print("y:", adata.obsm["spatial"][:, 1].min(), "to", adata.obsm["spatial"][:, 1].max())
+    print("Crop coord:", crop_coord)
+    print("Spatial coordinates shape:", adata.obsm["spatial"].shape)
+    print("First few spatial coords:\n", adata.obsm["spatial"][:5])
+    print("Louvain labels info:")
+    print("Unique labels:", adata.obs['louvain'].unique())
+    print("Number of NaNs:", adata.obs['louvain'].isna().sum())
+    print("Data type:", adata.obs['louvain'].dtype)
 
     # 绘图
     sc.pl.spatial(
@@ -373,7 +386,7 @@ def main():
 
 
     """
-    
+
     print("\033[1;32m" + success_art + "\033[0m")
     print("\033[1;36m✨ Analysis completed successfully! All results saved. ✨\033[0m")
     print("\033[1;33m🎉 You're awesome! Go celebrate with a coffee! ☕\033[0m")
@@ -454,6 +467,7 @@ print("✅ 已保存 used_barcodes.txt")
 # 保存 position.tsv（格式：barcode, x, y）
 # 注意：Visium 坐标常用 pxl_col (x), pxl_row (y)，但有些工具用 array_col/array_row
 # 这里用高分辨率图像坐标（pxl_col, pxl_row），你也可以根据需求换
+# ✅ 正确：使用高分辨率像素坐标 (pxl_col, pxl_row)
 pos_used = pos_df[pos_df["in_tissue"] == 1][["barcode", "pxl_col", "pxl_row"]]
 pos_used.to_csv(os.path.join(output_dir, "position.tsv"), sep="\t", index=False, header=False)
 
@@ -577,15 +591,37 @@ class GATESTrainer:
         """
         self.model.train()
         data = data.to(self.device)
+        spatial_edge_index = data.spatial_edge_index  # [2, E]
+
+        # 从配置中读取空间正则化权重（默认为 0.0，即不启用）
+        lambda_spatial = self.config['train'].get('lambda_spatial', 0.0)
+
         for epoch in tqdm(range(n_epochs), desc="Training"):
             self.optimizer.zero_grad()
-            _, recon = self.model(data.x, data.spatial_edge_index, data.gene_sim_edge_index)
-            loss = F.mse_loss(recon, data.x)
-            loss.backward()
+            embeddings, recon = self.model(data.x, spatial_edge_index, data.gene_sim_edge_index)
+
+            # 1. 重构损失（MSE）
+            recon_loss = F.mse_loss(recon, data.x)
+
+            # 2. 空间一致性正则项（仅当 lambda_spatial > 0 时计算）
+            spatial_loss = 0.0
+            if lambda_spatial > 0.0:
+                z_i = embeddings[spatial_edge_index[0]]  # source 节点嵌入
+                z_j = embeddings[spatial_edge_index[1]]  # target 节点嵌入
+                spatial_loss = F.mse_loss(z_i, z_j)      # ||z_i - z_j||^2 的均值
+
+            # 3. 总损失
+            total_loss = recon_loss + lambda_spatial * spatial_loss
+
+            total_loss.backward()
             self.optimizer.step()
-            self.loss_history.append(loss.item())
+            self.loss_history.append(total_loss.item())
+
             if epoch % 100 == 0:
-                print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
+                print(f"Epoch {epoch}, Recon Loss: {recon_loss.item():.4f}", end="")
+                if lambda_spatial > 0.0:
+                    print(f", Spatial Loss: {spatial_loss.item():.4f}", end="")
+                print(f", Total Loss: {total_loss.item():.4f}")
 
     def infer(self, data: Data) -> torch.Tensor:
         """
@@ -604,6 +640,7 @@ class GATESTrainer:
 ============================================================
 
 # src/utils.py
+import os
 import pandas as pd
 import numpy as np
 import scanpy as sc
@@ -616,40 +653,76 @@ from torch_geometric.data import Data
 import sklearn
 
 def load_and_preprocess_data(config: dict) -> sc.AnnData:
-    # 1. 加载计数矩阵和坐标
-    counts = pd.read_csv(config['data']['counts_file'], sep='\t', index_col=0)
-    coor_df = pd.read_csv(config['data']['coor_file'], sep='\t', header=None)
+    # 1. 检查并加载计数矩阵
+    counts_file = config['data']['counts_file']
+    if not os.path.exists(counts_file):
+        raise FileNotFoundError(f"计数矩阵文件不存在: {counts_file}")
+
+    try:
+        counts = pd.read_csv(counts_file, sep='\t', index_col=0)
+    except Exception as e:
+        raise ValueError(f"无法读取计数矩阵文件 '{counts_file}'，请检查文件格式是否为制表符分隔的文本文件（TSV），且第一列为基因名。错误详情: {e}")
+
+    # 2. 检查并加载坐标文件
+    coor_file = config['data']['coor_file']
+    if not os.path.exists(coor_file):
+        raise FileNotFoundError(f"空间坐标文件不存在: {coor_file}")
+
+    try:
+        coor_df = pd.read_csv(coor_file, sep='\t', header=None)
+    except Exception as e:
+        raise ValueError(f"无法读取坐标文件 '{coor_file}'，请确保其为制表符分隔的三列文本文件（barcode, x, y），无表头。错误详情: {e}")
+
+    if coor_df.shape[1] < 3:
+        raise ValueError(f"坐标文件 '{coor_file}' 至少应包含三列（barcode, x, y），当前只有 {coor_df.shape[1]} 列。")
+
     coor_df.columns = ['barcode', 'x', 'y']
     coor_df = coor_df.set_index('barcode')
 
-    # 2. 确保索引类型一致（字符串）
+    # 3. 确保索引类型一致（字符串）
     counts.columns = counts.columns.astype(str)
     coor_df.index = coor_df.index.astype(str)
 
-    # 3. 创建 AnnData（cells × genes）
+    # 4. 创建 AnnData（cells × genes）
     adata = sc.AnnData(counts.T)
     adata.var_names_make_unique()
 
-    # 4. 对齐表达数据和坐标（取交集）
+    # 5. 对齐表达数据和坐标（取交集）
     common_barcodes = adata.obs_names.intersection(coor_df.index)
+    if len(common_barcodes) == 0:
+        raise ValueError("计数矩阵的列名（细胞barcode）与坐标文件的barcode无交集，请检查两者是否匹配。")
+
     adata = adata[common_barcodes, :]
     coor_df = coor_df.loc[common_barcodes]
 
-    # 5. 设置空间坐标 [x, y]
+    # 6. 设置空间坐标 [x, y]
     adata.obsm["spatial"] = coor_df[['x', 'y']].values
 
-    # 6. QC 和标准化（保持不变）
+    # 7. QC 和标准化（保持不变）
     sc.pp.calculate_qc_metrics(adata, inplace=True)
 
+    # 8. 可选：加载已使用的barcode列表
     if 'used_barcodes_file' in config['data'] and config['data']['used_barcodes_file']:
-        used_barcode = pd.read_csv(config['data']['used_barcodes_file'], sep='\t', header=None)[0].astype(str)
+        used_barcodes_file = config['data']['used_barcodes_file']
+        if not os.path.exists(used_barcodes_file):
+            raise FileNotFoundError(f"指定的 used_barcodes_file 不存在: {used_barcodes_file}")
+
+        try:
+            used_barcode = pd.read_csv(used_barcodes_file, sep='\t', header=None)[0].astype(str)
+        except Exception as e:
+            raise ValueError(f"无法读取 used_barcodes_file '{used_barcodes_file}'，应为单列文本文件。错误详情: {e}")
+
         used_barcode = used_barcode[used_barcode.isin(adata.obs_names)]
+        if len(used_barcode) == 0:
+            raise ValueError("used_barcodes_file 中的 barcode 与当前 AnnData 无交集。")
         adata = adata[used_barcode, :]
 
+    # 9. 后续预处理
     sc.pp.filter_genes(adata, min_cells=50)
     sc.pp.highly_variable_genes(adata, flavor="seurat_v3", n_top_genes=config['model']['n_top_genes'])
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
+
     return adata
 
 def Cal_Spatial_Net(adata, rad_cutoff=None, k_cutoff=None, model='Radius', verbose=True):

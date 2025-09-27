@@ -9,10 +9,11 @@ TARGET_PATHS = [
     # 根目录
     ".gitignore",
     "README.md",
-    "requirements.txt",
 
     # 配置文件
     "configs/default.yaml",
+    "configs/requirements.txt",
+
 
     # 脚本
     "scripts/run_analysis.py",

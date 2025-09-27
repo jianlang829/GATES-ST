@@ -39,6 +39,7 @@ print("✅ 已保存 used_barcodes.txt")
 # 保存 position.tsv（格式：barcode, x, y）
 # 注意：Visium 坐标常用 pxl_col (x), pxl_row (y)，但有些工具用 array_col/array_row
 # 这里用高分辨率图像坐标（pxl_col, pxl_row），你也可以根据需求换
+# ✅ 正确：使用高分辨率像素坐标 (pxl_col, pxl_row)
 pos_used = pos_df[pos_df["in_tissue"] == 1][["barcode", "pxl_col", "pxl_row"]]
 pos_used.to_csv(os.path.join(output_dir, "position.tsv"), sep="\t", index=False, header=False)
 

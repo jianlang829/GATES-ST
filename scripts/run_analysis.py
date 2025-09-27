@@ -7,6 +7,7 @@ from sklearn.metrics import silhouette_score, davies_bouldin_score
 from src.utils import load_and_preprocess_data, Cal_Spatial_Net, Stats_Spatial_Net, Cal_Gene_Similarity_Net, create_pyg_data
 from src.gates_model import GATES
 from src.trainer import GATESTrainer
+import squidpy as sq
 
 def main():
     with open('./configs/default.yaml', 'r', encoding='utf-8') as f:
@@ -74,6 +75,7 @@ def main():
     sc.pp.neighbors(adata, use_rep=config['train']['key_added'])
     sc.tl.umap(adata)
     sc.tl.louvain(adata, resolution=resolution)
+    adata.obs['louvain'] = adata.obs['louvain'].astype('category')  # 👈 新增这行！
     louvain_labels = adata.obs['louvain'].astype(int)
 
     # 修正：使用 GATES 嵌入计算指标，而非 UMAP
@@ -99,15 +101,27 @@ def main():
     # 确保目录存在
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    # 绘图
-    sc.pl.spatial(
+    print("Spatial coordinates range:")
+    print("x:", adata.obsm["spatial"][:, 0].min(), "to", adata.obsm["spatial"][:, 0].max())
+    print("y:", adata.obsm["spatial"][:, 1].min(), "to", adata.obsm["spatial"][:, 1].max())
+    print("Crop coord:", crop_coord)
+    print("Spatial coordinates shape:", adata.obsm["spatial"].shape)
+    print("First few spatial coords:\n", adata.obsm["spatial"][:5])
+    print("Louvain labels info:")
+    print("Unique labels:", adata.obs['louvain'].unique())
+    print("Number of NaNs:", adata.obs['louvain'].isna().sum())
+    print("Data type:", adata.obs['louvain'].dtype)
+
+    # 替换原来的 sc.pl.spatial 调用
+    sq.pl.spatial_scatter(
         adata,
         color="louvain",
-        crop_coord=crop_coord,
-        spot_size=6,
-        show=False,
-        title=f'Ours SC{sc_score:.2f} DB{db_score:.2f}'
+        shape=None,  # 不显示组织轮廓（可选）
+        size=20,     # 对应 spot_size
+        title=f'Ours SC{sc_score:.2f} DB{db_score:.2f}',
+        save=output_path  # 自动保存，无需 plt.savefig
     )
+
     plt.axis('off')
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -124,7 +138,7 @@ def main():
 
 
     """
-    
+
     print("\033[1;32m" + success_art + "\033[0m")
     print("\033[1;36m✨ Analysis completed successfully! All results saved. ✨\033[0m")
     print("\033[1;33m🎉 You're awesome! Go celebrate with a coffee! ☕\033[0m")
