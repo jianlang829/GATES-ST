@@ -7,25 +7,17 @@ OUTPUT_FILE = "project_summary.txt"
 # 定义要提取的文件路径（相对于项目根目录）
 TARGET_PATHS = [
     # 根目录
-    ".gitignore",
-    "README.md",
 
     # 配置文件
     "configs/default.yaml",
-    "configs/requirements.txt",
-
 
     # 脚本
     "scripts/run_analysis.py",
 
     # 源代码（只取 .py，自动跳过 __pycache__）
-    "src/Check_gpu_available.py",
-    "src/convert_visium_to_stereo.py",
     "src/gates_model.py",
-    "src/pyg.py",
     "src/trainer.py",
     "src/utils.py",
-    "src/__init__.py",
 ]
 
 # ============================================

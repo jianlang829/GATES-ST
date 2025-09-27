@@ -211,3 +211,70 @@ def create_pyg_data(adata: sc.AnnData, config: dict) -> Data:
         gene_sim_edge_index=gene_sim_edge_index
     )
     return data
+
+def Prune_Spatial_By_GeneSim(adata, k=6, metric='cosine', verbose=True):
+    """基于基因表达相似性对空间图进行剪枝：仅保留 top-k 最相似的空间邻居"""
+    # 1. 获取空间边
+    spatial_net = adata.uns['Spatial_Net'].copy()
+    cell_to_idx = {cell: i for i, cell in enumerate(adata.obs_names)}
+    idx_to_cell = {i: cell for cell, i in cell_to_idx.items()}
+
+    # 2. 计算基因相似度矩阵（仅高变基因）
+    if 'highly_variable' in adata.var:
+        X = adata[:, adata.var['highly_variable']].X
+    else:
+        X = adata.X
+    X = X.toarray() if hasattr(X, 'toarray') else X
+    X = X.astype(np.float32)
+
+    if metric == 'cosine':
+        sim = cosine_similarity(X)
+    else:
+        raise NotImplementedError("目前仅支持 cosine 相似度用于剪枝")
+
+    # 3. 对每个细胞的空间邻居，按基因相似度选 top-k
+    pruned_edges = []
+    grouped = spatial_net.groupby('Cell1')
+    for cell1, group in grouped:
+        neighbors = group['Cell2'].values
+        if len(neighbors) == 0:
+            continue
+        idx1 = cell_to_idx[cell1]
+        neighbor_indices = [cell_to_idx[c] for c in neighbors if c in cell_to_idx]
+        if not neighbor_indices:
+            continue
+        sims = sim[idx1, neighbor_indices]
+        top_k_idx = np.argsort(-sims)[:k]
+        top_neighbors = [idx_to_cell[neighbor_indices[i]] for i in top_k_idx]
+        for cell2 in top_neighbors:
+            pruned_edges.append((cell1, cell2))
+
+    # 4. 更新 Spatial_Net
+    pruned_df = pd.DataFrame(pruned_edges, columns=['Cell1', 'Cell2'])
+    pruned_df['Distance'] = 1.0  # 距离不再重要，可设为1
+    adata.uns['Spatial_Net'] = pruned_df
+
+    if verbose:
+        print(f"After pruning, spatial graph has {pruned_df.shape[0]} edges.")
+
+
+def build_graphs(adata, config):
+    """根据 graph_strategy 构建图"""
+    strategy = config.get('graph_strategy', 'spatial-similarity')
+    rad = config['model']['rad_cutoff']
+    k = config['model']['k_neighbors']
+    metric = config['model']['similarity_metric']
+
+    if strategy == "spatial-prune":
+        Cal_Spatial_Net(adata, rad_cutoff=rad, model='Radius', verbose=True)
+        Prune_Spatial_By_GeneSim(adata, k=k, metric=metric, verbose=True)
+        # 不构建 Gene_Similarity_Net，alpha 应设为 0
+    elif strategy == "spatial-similarity":
+        Cal_Spatial_Net(adata, rad_cutoff=rad, model='Radius', verbose=True)
+        Cal_Gene_Similarity_Net(adata, k_neighbors=k, metric=metric, verbose=True)
+    elif strategy == "prune-similarity":
+        Cal_Spatial_Net(adata, rad_cutoff=rad, model='Radius', verbose=True)
+        Prune_Spatial_By_GeneSim(adata, k=k, metric=metric, verbose=True)
+        Cal_Gene_Similarity_Net(adata, k_neighbors=k, metric=metric, verbose=True)
+    else:
+        raise ValueError(f"Unknown graph_strategy: {strategy}")

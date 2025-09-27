@@ -3,6 +3,7 @@ data/
 logs/
 cache/
 results/
+figures/
 
 # Large file extensions
 *.zip
@@ -13,6 +14,7 @@ results/
 *.pth
 *.onnx
 *.pb
+*.7z
 
 # Python
 *.pyc

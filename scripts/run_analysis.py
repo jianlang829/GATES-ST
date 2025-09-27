@@ -4,13 +4,13 @@ import yaml
 import scanpy as sc
 import matplotlib.pyplot as plt
 from sklearn.metrics import silhouette_score, davies_bouldin_score
-from src.utils import load_and_preprocess_data, Cal_Spatial_Net, Stats_Spatial_Net, Cal_Gene_Similarity_Net, create_pyg_data
+from src.utils import build_graphs, load_and_preprocess_data, Cal_Spatial_Net, Stats_Spatial_Net, Cal_Gene_Similarity_Net, create_pyg_data
 from src.gates_model import GATES
 from src.trainer import GATESTrainer
 import squidpy as sq
 
 def main():
-    with open('./configs/default.yaml', 'r', encoding='utf-8') as f:
+    with open('configs/default.yaml', 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
 
     # === 新增：定义缓存路径 ===
@@ -34,22 +34,13 @@ def main():
         print("Loading and preprocessing data...")
         adata = load_and_preprocess_data(config)
         print(f'After filtering: {adata.shape}')
-
-        print("Building spatial network...")
-        Cal_Spatial_Net(adata, rad_cutoff=config['model']['rad_cutoff'], model='Radius', verbose=True)
+        print("Building graphs according to strategy...")
+        build_graphs(adata, config)  # 👈 替换这里
         Stats_Spatial_Net(adata, save_path=config['output']['neighbor_stats_plot'].format(alpha=alpha, resolution=resolution), show_plot=False)
-
-        print("Building gene similarity network...")
-        Cal_Gene_Similarity_Net(
-            adata,
-            k_neighbors=config['model']['k_neighbors'],
-            metric=config['model']['similarity_metric'],
-            verbose=True
-        )
-
         # === 保存到缓存 ===
         print(f"Saving preprocessed data to cache: {cache_file}")
         adata.write_h5ad(cache_file)
+
     print("Preparing PyG data...")
     pyg_data = create_pyg_data(adata, config)
     # 确保输入维度正确：高变基因数量

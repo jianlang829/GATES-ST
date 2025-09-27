@@ -1,10 +1,9 @@
-# configs/default.yaml
 data:
   counts_file: 'data/151673/RNA_counts.tsv'
   coor_file: 'data/151673/position.tsv'
   used_barcodes_file: 'data/151673/used_barcodes.txt'
 model:
-  alpha: 0.5  # 修正：原值 0.0001 过小，建议 0.1~0.9
+  alpha: 0.5
   n_top_genes: 3000
   hidden_dims: [512, 30]
   rad_cutoff: 50
@@ -22,3 +21,4 @@ output:
   spatial_plot_path: "results/spatial_plot.png"
   neighbor_stats_plot: 'figure/alpha{alpha}_{resolution}_Stereo-seq_Mouse_NumberOfNeighbors.png'
   spatial_plot_crop: null
+graph_strategy: "spatial-similarity"  # 可选: "spatial-prune", "spatial-similarity", "prune-similarity"
