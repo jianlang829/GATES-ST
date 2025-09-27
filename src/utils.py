@@ -1,4 +1,5 @@
 # src/utils.py
+import os
 import pandas as pd
 import numpy as np
 import scanpy as sc
@@ -11,40 +12,76 @@ from torch_geometric.data import Data
 import sklearn
 
 def load_and_preprocess_data(config: dict) -> sc.AnnData:
-    # 1. 加载计数矩阵和坐标
-    counts = pd.read_csv(config['data']['counts_file'], sep='\t', index_col=0)
-    coor_df = pd.read_csv(config['data']['coor_file'], sep='\t', header=None)
+    # 1. 检查并加载计数矩阵
+    counts_file = config['data']['counts_file']
+    if not os.path.exists(counts_file):
+        raise FileNotFoundError(f"计数矩阵文件不存在: {counts_file}")
+
+    try:
+        counts = pd.read_csv(counts_file, sep='\t', index_col=0)
+    except Exception as e:
+        raise ValueError(f"无法读取计数矩阵文件 '{counts_file}'，请检查文件格式是否为制表符分隔的文本文件（TSV），且第一列为基因名。错误详情: {e}")
+
+    # 2. 检查并加载坐标文件
+    coor_file = config['data']['coor_file']
+    if not os.path.exists(coor_file):
+        raise FileNotFoundError(f"空间坐标文件不存在: {coor_file}")
+
+    try:
+        coor_df = pd.read_csv(coor_file, sep='\t', header=None)
+    except Exception as e:
+        raise ValueError(f"无法读取坐标文件 '{coor_file}'，请确保其为制表符分隔的三列文本文件（barcode, x, y），无表头。错误详情: {e}")
+
+    if coor_df.shape[1] < 3:
+        raise ValueError(f"坐标文件 '{coor_file}' 至少应包含三列（barcode, x, y），当前只有 {coor_df.shape[1]} 列。")
+
     coor_df.columns = ['barcode', 'x', 'y']
     coor_df = coor_df.set_index('barcode')
 
-    # 2. 确保索引类型一致（字符串）
+    # 3. 确保索引类型一致（字符串）
     counts.columns = counts.columns.astype(str)
     coor_df.index = coor_df.index.astype(str)
 
-    # 3. 创建 AnnData（cells × genes）
+    # 4. 创建 AnnData（cells × genes）
     adata = sc.AnnData(counts.T)
     adata.var_names_make_unique()
 
-    # 4. 对齐表达数据和坐标（取交集）
+    # 5. 对齐表达数据和坐标（取交集）
     common_barcodes = adata.obs_names.intersection(coor_df.index)
+    if len(common_barcodes) == 0:
+        raise ValueError("计数矩阵的列名（细胞barcode）与坐标文件的barcode无交集，请检查两者是否匹配。")
+
     adata = adata[common_barcodes, :]
     coor_df = coor_df.loc[common_barcodes]
 
-    # 5. 设置空间坐标 [x, y]
+    # 6. 设置空间坐标 [x, y]
     adata.obsm["spatial"] = coor_df[['x', 'y']].values
 
-    # 6. QC 和标准化（保持不变）
+    # 7. QC 和标准化（保持不变）
     sc.pp.calculate_qc_metrics(adata, inplace=True)
 
+    # 8. 可选：加载已使用的barcode列表
     if 'used_barcodes_file' in config['data'] and config['data']['used_barcodes_file']:
-        used_barcode = pd.read_csv(config['data']['used_barcodes_file'], sep='\t', header=None)[0].astype(str)
+        used_barcodes_file = config['data']['used_barcodes_file']
+        if not os.path.exists(used_barcodes_file):
+            raise FileNotFoundError(f"指定的 used_barcodes_file 不存在: {used_barcodes_file}")
+
+        try:
+            used_barcode = pd.read_csv(used_barcodes_file, sep='\t', header=None)[0].astype(str)
+        except Exception as e:
+            raise ValueError(f"无法读取 used_barcodes_file '{used_barcodes_file}'，应为单列文本文件。错误详情: {e}")
+
         used_barcode = used_barcode[used_barcode.isin(adata.obs_names)]
+        if len(used_barcode) == 0:
+            raise ValueError("used_barcodes_file 中的 barcode 与当前 AnnData 无交集。")
         adata = adata[used_barcode, :]
 
+    # 9. 后续预处理
     sc.pp.filter_genes(adata, min_cells=50)
     sc.pp.highly_variable_genes(adata, flavor="seurat_v3", n_top_genes=config['model']['n_top_genes'])
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
+
     return adata
 
 def Cal_Spatial_Net(adata, rad_cutoff=None, k_cutoff=None, model='Radius', verbose=True):

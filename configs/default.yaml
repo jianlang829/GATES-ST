@@ -1,8 +1,8 @@
 # configs/default.yaml
 data:
-  counts_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/RNA_counts.tsv'
-  coor_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/position.tsv'
-  used_barcodes_file: 'C:/Users/admini/Documents/GATES-ST/data/151673/used_barcodes.txt'
+  counts_file: 'data/151673/RNA_counts.tsv'
+  coor_file: 'data/151673/position.tsv'
+  used_barcodes_file: 'data/151673/used_barcodes.txt'
 model:
   alpha: 0.5  # 修正：原值 0.0001 过小，建议 0.1~0.9
   n_top_genes: 3000
@@ -19,5 +19,5 @@ cluster:
   resolution: 1.0
 output:
   spatial_plot_path: "results/spatial_plot.png"
-  neighbor_stats_plot: 'C:/Users/admini/Documents/GATES-ST/figure/alpha{alpha}_{resolution}_Stereo-seq_Mouse_NumberOfNeighbors.png'
+  neighbor_stats_plot: 'figure/alpha{alpha}_{resolution}_Stereo-seq_Mouse_NumberOfNeighbors.png'
   spatial_plot_crop: [10100, 10721, 13810, 13093]
